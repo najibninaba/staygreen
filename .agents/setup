@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Prepares a fresh Amp orb: npm dependencies for the app, the CLI package and the
+# heartbeat Worker, plus Playwright's Chromium for the browser suites. Idempotent;
+# credentials come from Amp project environment variables or secrets, never from here.
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+step() {
+  local label="$1"
+  shift
+  local start=$SECONDS
+  echo "==> $label"
+  "$@"
+  echo "<== $label ($((SECONDS - start))s)"
+}
+
+# The repository needs Node 22 or later (README.md § Development).
+node_major="$(node -p 'process.versions.node.split(".")[0]')"
+if ((node_major < 22)); then
+  echo "Node $(node -v) is too old; staygreen needs Node 22 or later." >&2
+  exit 1
+fi
+
+npm_ci() {
+  npm ci --prefix "$1" --no-audit --no-fund --loglevel=error
+}
+
+step "npm ci (root)" npm_ci .
+step "npm ci (packages/staygreen)" npm_ci packages/staygreen
+step "npm ci (ingest)" npm_ci ingest
+
+# The e2e suites run on Chromium (the "Pixel 7" device). The download skips a browser
+# that is already present.
+step "playwright chromium" npx --no-install playwright install chromium
+
+# Its system libraries come through apt; skip `apt-get update` when none are missing.
+chromium_libs_missing() {
+  local bin
+  for bin in "$HOME"/.cache/ms-playwright/chromium*/chrome-linux*/chrome \
+    "$HOME"/.cache/ms-playwright/chromium_headless_shell*/chrome-*/chrome-headless-shell; do
+    [ -x "$bin" ] || continue
+    if ldd "$bin" | grep -q "not found"; then return 0; fi
+  done
+  return 1
+}
+if chromium_libs_missing; then
+  step "playwright system deps" npx --no-install playwright install-deps chromium
+fi
+
+# dotenv never overrides variables already set, so Amp project variables win over these
+# placeholders. An empty credential makes the integration suite skip loudly.
+[ -f .env ] || cp -- .env.example .env

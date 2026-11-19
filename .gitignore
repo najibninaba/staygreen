@@ -65,3 +65,6 @@ __pycache__/
 # scratch (screenshots and throwaway files)
 Temp/
 shots/
+
+# amp orb portal descriptors
+.amp/portals/*
